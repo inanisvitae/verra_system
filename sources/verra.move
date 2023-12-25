@@ -1,4 +1,4 @@
-module coin_swap::verra {
+module verra_system::verra {
     use sui::transfer;
     use sui::object::{Self, UID};
     use sui::tx_context::{Self, TxContext};
@@ -38,7 +38,7 @@ module coin_swap::verra {
         description: String
     }
 
-    struct Pocket has key {
+    struct Pocket has key, store {
         id: UID,
         currency: String,
         type: String,
