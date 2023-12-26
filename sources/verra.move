@@ -5,6 +5,7 @@ module verra_system::verra {
     use sui::event::{Self};
     use sui::table::{Table, Self};
     use sui::dynamic_field as df;
+    use sui::math;
     use std::string::{Self, String};
 
     const ENotTheSameCurrency: u64 = 0;
@@ -21,7 +22,7 @@ module verra_system::verra {
         from: address,
         to: address,
         description: String,
-        amount: u16,
+        amount: u64,
         currency: String
     }
 
@@ -29,7 +30,7 @@ module verra_system::verra {
         from: address,
         to: address,
         description: String,
-        amount: u16,
+        amount: u64,
         currency: String
     }
 
@@ -42,7 +43,7 @@ module verra_system::verra {
         id: UID,
         currency: String,
         type: String,
-        balance: u16,
+        balance: u64,
         owner: address
     }
 
@@ -64,11 +65,11 @@ module verra_system::verra {
         from: address,
         to: address,
         description: String,
-        amount: u16,
+        amount: u64,
         currency: String
     }
 
-    struct ExchangeRatePublisher has key {
+    struct ExchangeRatePublisher has key, store {
         id: UID,
         fee: u64,
         description: String,
@@ -87,7 +88,7 @@ module verra_system::verra {
         // Creates a new rate publisher
         let exchange_rate_publisher = ExchangeRatePublisher {
             id: object::new(ctx),
-            fee: 50,
+            fee: 1,
             description: string::utf8(b"A new exchange rate publisher"),
             source_url: string::utf8(b"A source url to forex price exchange")
         };
@@ -96,6 +97,27 @@ module verra_system::verra {
         let fees = table::new<String, u64>(ctx);
         df::add(&mut exchange_rate_publisher.id, publisher_fees(), fees);
         let pockets = table::new<String, Pocket>(ctx);
+        table::add(&mut pockets, string::utf8(b"PLN"), Pocket {
+            id: object::new(ctx),
+            currency: string::utf8(b"PLN"),
+            type: admin_type(),
+            balance: 0,
+            owner: tx_context::sender(ctx)
+        });
+        table::add(&mut pockets, string::utf8(b"USD"), Pocket {
+            id: object::new(ctx),
+            currency: string::utf8(b"USD"),
+            type: admin_type(),
+            balance: 0,
+            owner: tx_context::sender(ctx)
+        });
+        table::add(&mut pockets, string::utf8(b"EUR"), Pocket {
+            id: object::new(ctx),
+            currency: string::utf8(b"EUR"),
+            type: admin_type(),
+            balance: 0,
+            owner: tx_context::sender(ctx)
+        });
         df::add(&mut exchange_rate_publisher.id, publisher_pockets(), pockets);
 
         transfer::share_object(exchange_rate_publisher);
@@ -166,7 +188,7 @@ module verra_system::verra {
                                     from_pocket: &mut Pocket,
                                     to: address,
                                     description: String,
-                                    amount: u16,
+                                    amount: u64,
                                     currency: String,
                                     ctx: &mut TxContext) {
         let from = tx_context::sender(ctx);
@@ -221,7 +243,7 @@ module verra_system::verra {
                             from_pocket: &mut Pocket,
                             to: address,
                             description: String,
-                            amount: u16,
+                            amount: u64,
                             currency: String,
                             ctx: &mut TxContext) {
         let from = tx_context::sender(ctx);
@@ -246,21 +268,33 @@ module verra_system::verra {
         });
     }
 
-    // It's equal as in minting, since we are creating balance out of nowhere for admin.
-    // Or we deduct same amount from admin's pocket
-    fun topup_exchange(admin_cap: &CoinAdminCap, publisher: &mut ExchangeRatePublisher) {
-
+    public entry fun topup_exchange(_: &CoinAdminCap,
+                                    publisher: &mut ExchangeRatePublisher,
+                                    currency: String,
+                                    amount: u64) {
+        // Simply adds balance change to one of the pockets in topup exchange
+        let pockets: &mut Table<String, Pocket> = df::borrow_mut(&mut publisher.id, publisher_pockets());
+        let pocket: &mut Pocket = table::borrow_mut(pockets, currency);
+        pocket.balance = pocket.balance + amount;
     }
 
-    fun collect_fees() {
+    public entry fun collect_fees(admin_cap: &CoinAdminCap,
+                                    publisher: &mut ExchangeRatePublisher,
+                                    currency: String) {
         
+    }
+
+    // Might be needed or not. Order records can be appended to publisher and every 10 minutes it should be
+    // Removed and written to database
+    public entry fun collect_records() {
+
     }
 
     /// Mints new balance with requested currency for admin pocket
     public entry fun mint(admin_cap: &CoinAdminCap,
                         pocket: &mut Pocket,
                         to: address,
-                        amount: u16,
+                        amount: u64,
                         currency: String,
                         ctx: &mut TxContext) {
         // Should check whether requested currency matches the symbol of the pocket
@@ -274,17 +308,17 @@ module verra_system::verra {
 
     // /// Destroys balance with requested currency
     // TODO: Or will be implemented in the end
-    // public fun destroy(_: &CoinAdminCap, pocket: &mut Pocket, amount: u16, currency: String) {
+    // public fun destroy(_: &CoinAdminCap, pocket: &mut Pocket, amount: u64, currency: String) {
     //     assert!(pocket.currency == currency, ENotTheSameCurrency);
     //     assert!(pocket.balance > amount, ENotEnoughBalance);
     //     pocket.balance = pocket.balance - amount;
     // }
 
-    public fun update_fee(_: &CoinAdminCap, fee: u16, currency_pair: String) {
-        
+    public fun update_fee(_: &CoinAdminCap, publisher: &mut ExchangeRatePublisher, fee: u64) {
+        publisher.fee = fee;
     }
 
-    public fun add_currency_pair(_: &CoinAdminCap, rate: u16, currency_pair: String) {
+    public fun add_currency_pair(_: &CoinAdminCap, rate: u64, currency_pair: String) {
 
     }
 
@@ -292,18 +326,49 @@ module verra_system::verra {
 
     }
 
+    public entry fun update_rate(_: &CoinAdminCap,
+                                publisher: &mut ExchangeRatePublisher,
+                                currency_pair: String,
+                                rate: u64) {
+        let rates: &mut Table<String, u64> = df::borrow_mut(&mut publisher.id, publisher_rates());
+        if (table::contains<String, u64>(rates, currency_pair)) {
+            table::remove(rates, currency_pair);
+        };
+        table::add(rates, currency_pair, rate);
+    }
+
     public entry fun request_exchange(_: &UserCap,
-                                    from: &mut Pocket,
-                                    exchange_rate_publisher: &mut ExchangeRatePublisher,
+                                    from: &mut Pocket, // Source pocket belonging to the user
+                                    to: &mut Pocket, // Destination pocket belonging to the user
+                                    publisher: &mut ExchangeRatePublisher,
                                     currency_pair: String,
-                                    amount: u16) {
+                                    source_currency: String,
+                                    converted_currency: String,
+                                    amount: u64) {
         // Checks whether currency_pair exists
         // Checks whether from Pocket has enough balance
         // Checks whether from Pocket has the same currency type
         // Calculates the fee by adding it to the cost
-        // 
+        // Exchanged fund should go directly to the to pocket
+        let rates: &mut Table<String, u64> = df::borrow_mut(&mut publisher.id, publisher_rates());
+        let rate = table::borrow(rates, currency_pair);
+        std::debug::print(&(string::utf8(b"====== Debugging")));
+        std::debug::print(rate);
+        let outbound_amount = math::divide_and_round_up(amount * (*rate), 100);
+        std::debug::print(&outbound_amount);
+        // Deduct outbound amount from user's pocket
+        from.balance = from.balance - (amount + publisher.fee);
+        // Obtains pockets book from publisher
+        let pockets: &mut Table<String, Pocket> = df::borrow_mut(&mut publisher.id, publisher_pockets());
+        let publisher_source_currency_pocket: &mut Pocket = table::borrow_mut(pockets, source_currency);
+        // Adds the amount to publisher's correct pocket
+        publisher_source_currency_pocket.balance = publisher_source_currency_pocket.balance + amount;
+        let publisher_converted_currency_pocket: &mut Pocket = table::borrow_mut(pockets, converted_currency);
+        // Sends outbound amount from publisher pocket to user
+        publisher_converted_currency_pocket.balance = publisher_converted_currency_pocket.balance - outbound_amount;
+        // Adds the amount to user's destination pocket
+        to.balance = to.balance + outbound_amount;
     }
-    
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
@@ -314,7 +379,7 @@ module verra_system::verra {
         self.description
     }
 
-    public fun get_pocket(self: &Pocket): (String, String, u16, address) {
+    public fun get_pocket(self: &Pocket): (String, String, u64, address) {
         (self.currency, self.type, self.balance, self.owner)
     }
 
@@ -322,13 +387,14 @@ module verra_system::verra {
         (self.user_address, self.profile_pic_url, self.type)
     }
 
-    public fun get_transfer(self: &Transfer): (address, address, String, u16, String) {
+    public fun get_transfer(self: &Transfer): (address, address, String, u64, String) {
         (self.from, self.to, self.description, self.amount, self.currency)
     }
 
-    public fun get_publisher(self: &ExchangeRatePublisher): (&Table<String, u64>, &Table<String, u64>) {
+    public fun get_publisher(self: &ExchangeRatePublisher): (&Table<String, u64>, &Table<String, u64>, &Table<String, Pocket>) {
         let rates = df::borrow(&self.id, publisher_rates());
         let fees = df::borrow(&self.id, publisher_fees());
-        (rates, fees)
+        let pockets = df::borrow(&self.id, publisher_pockets());
+        (rates, fees, pockets)
     }
 }

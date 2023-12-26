@@ -2,6 +2,7 @@
 module verra_system::tests {
     use sui::test_scenario::{Self, Scenario, next_tx, ctx};
     use std::string::{Self, String};
+    use verra_system::verra::{Self, Pocket};
     use sui::dynamic_field as df;
     use sui::table::{Table, Self};
 
@@ -10,9 +11,9 @@ module verra_system::tests {
     fun fixed_url(): (String) { string::utf8(b"Random Url") }
     fun individual_type(): (String) { string::utf8(b"individual") }
     fun admin_type(): (String) { string::utf8(b"admin") }
-    fun fixed_amount(): u16 { 90 }
-    fun one_third_fixed_amount(): u16 { 30 }
-    fun two_thirds_fixed_amount(): u16 { fixed_amount() - one_third_fixed_amount() }
+    fun fixed_amount(): u64 { 90 }
+    fun one_third_fixed_amount(): u64 { 30 }
+    fun two_thirds_fixed_amount(): u64 { fixed_amount() - one_third_fixed_amount() }
     fun pln_symbol(): (String) { string::utf8(b"PLN") }
     fun usd_symbol(): (String) { string::utf8(b"USD") }
     fun eur_symbol(): (String) { string::utf8(b"EUR") }
@@ -193,24 +194,136 @@ module verra_system::tests {
             std::debug::print(&(string::utf8(b"====== Verifies the forex exchange rate publisher is initialized correctly")));
             let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(&scenario);
             std::debug::print(&publisher);
-            let (rates, fees) = verra_system::verra::get_publisher(&publisher);
+            let (rates, fees, pockets) = verra_system::verra::get_publisher(&publisher);
             std::debug::print(rates);
             assert!(table::length(rates) == 0, 0);
             std::debug::print(fees);
             assert!(table::length(fees) == 0, 0);
+            std::debug::print(pockets);
+            assert!(table::length(pockets) == 3, 0);
+            let publisher_pln_pocket = table::borrow<String, Pocket>(pockets, string::utf8(b"PLN"));
+            std::debug::print(publisher_pln_pocket);
+            test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
+        };
+        test_update_rate(&mut scenario);
+        test_admin_publisher_topup(&mut scenario);
+        test_request_exchange(&mut scenario);
+        test_scenario::end(scenario);
+    }
 
+    fun test_admin_publisher_topup(scenario: &mut Scenario) {
+        let (admin, _, _) = people();
+        next_tx(scenario, admin);
+        { 
+            // Tops up balance for pln exchange pocket
+            std::debug::print(&(string::utf8(b"====== Tops up exchange balance")));
+            let coinadmincap = test_scenario::take_from_sender<verra_system::verra::CoinAdminCap>(scenario);
+            let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
+
+            verra_system::verra::topup_exchange(&coinadmincap, &mut publisher, pln_symbol(), fixed_amount());
+
+            test_scenario::return_to_address<verra_system::verra::CoinAdminCap>(admin, coinadmincap);
+            test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
+        };
+        next_tx(scenario, admin);
+        { 
+            // Tops up balance for pln exchange pocket
+            std::debug::print(&(string::utf8(b"====== Tops up exchange balance")));
+            let coinadmincap = test_scenario::take_from_sender<verra_system::verra::CoinAdminCap>(scenario);
+            let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
+
+            verra_system::verra::topup_exchange(&coinadmincap, &mut publisher, usd_symbol(), fixed_amount());
+
+            test_scenario::return_to_address<verra_system::verra::CoinAdminCap>(admin, coinadmincap);
+            test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
+        };
+        next_tx(scenario, admin);
+        { 
+            // Tops up balance for pln exchange pocket
+            std::debug::print(&(string::utf8(b"====== Tops up exchange balance")));
+            let coinadmincap = test_scenario::take_from_sender<verra_system::verra::CoinAdminCap>(scenario);
+            let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
+
+            verra_system::verra::topup_exchange(&coinadmincap, &mut publisher, eur_symbol(), fixed_amount());
+
+            test_scenario::return_to_address<verra_system::verra::CoinAdminCap>(admin, coinadmincap);
             test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
         };
 
-        // Tests transfer
-        // next_tx(&mut scenario, first_person);
-        // {
-        //     let sender_pln_pocket = test_scenario::take_from_sender<verra_system::verra::Pocket>(&scenario);
-        //     std::debug::print(&pln_pocket);
-        //     test_scenario::return_to_sender<verra_system::verra::Pocket>(&scenario, pln_pocket);
+        next_tx(scenario, admin);
+        {
+            std::debug::print(&(string::utf8(b"====== Verifies topup exchange pocket works 2")));
+            let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
+            let (rates, fees, pockets) = verra_system::verra::get_publisher(&publisher);
+            let publisher_pln_pocket = table::borrow<String, Pocket>(pockets, pln_symbol());
+            let (currency, type, balance, owner) = verra_system::verra::get_pocket(publisher_pln_pocket);
+            std::debug::print(publisher_pln_pocket);
+            assert!(balance == fixed_amount(), 0);
+            test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
+        };
+    }
 
-        // };
+    fun test_update_rate(scenario: &mut Scenario) {
+        let (admin, _, _) = people();
+        next_tx(scenario, admin);
+        {
+            std::debug::print(&(string::utf8(b"====== Update rate for PLN/USD currency pair")));
+            let coinadmincap = test_scenario::take_from_sender<verra_system::verra::CoinAdminCap>(scenario);
+            let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
+            verra_system::verra::update_rate(&coinadmincap, &mut publisher, string::utf8(b"PLNUSD"), 25); // PLN/USD = 0.25, we multiply it by 100
+            test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
+            test_scenario::return_to_address<verra_system::verra::CoinAdminCap>(admin, coinadmincap);
+        };
+        next_tx(scenario, admin);
+        {
+            let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
+            let (rates, fees, pockets) = verra_system::verra::get_publisher(&publisher);
+            let rate_of_pln_usd: &u64 = table::borrow(rates, string::utf8(b"PLNUSD"));
+            std::debug::print(rate_of_pln_usd);
+            assert!(*rate_of_pln_usd == 25, 0);
+            test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
+        };
+    }
 
-        test_scenario::end(scenario);
+    fun test_request_exchange(scenario: &mut Scenario) {
+        let (_, first_person, _) = people();
+
+        next_tx(scenario, first_person);
+        {
+            std::debug::print(&(string::utf8(b"====== Requests exchange from PLN to USD")));
+            let usercap = test_scenario::take_from_address<verra_system::verra::UserCap>(scenario, first_person);
+            let first_person_pln_pocket = test_scenario::take_from_address<verra_system::verra::Pocket>(scenario, first_person);
+            let first_person_eur_pocket = test_scenario::take_from_address<verra_system::verra::Pocket>(scenario, first_person);
+            let first_person_usd_pocket = test_scenario::take_from_address<verra_system::verra::Pocket>(scenario, first_person);
+            let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
+
+            std::debug::print(&first_person_pln_pocket);
+            std::debug::print(&first_person_usd_pocket);
+            std::debug::print(&first_person_eur_pocket);
+            verra_system::verra::request_exchange(&usercap, &mut first_person_pln_pocket, &mut first_person_usd_pocket, &mut publisher, string::utf8(b"PLNUSD"), pln_symbol(), usd_symbol(), 20);
+
+            test_scenario::return_to_address<verra_system::verra::Pocket>(first_person, first_person_pln_pocket);
+            test_scenario::return_to_address<verra_system::verra::Pocket>(first_person, first_person_usd_pocket);
+            test_scenario::return_to_address<verra_system::verra::Pocket>(first_person, first_person_eur_pocket);
+            test_scenario::return_shared<verra_system::verra::ExchangeRatePublisher>(publisher);
+            test_scenario::return_to_address<verra_system::verra::UserCap>(first_person, usercap);
+        };
+
+        next_tx(scenario, first_person);
+        {
+            std::debug::print(&(string::utf8(b"====== Verify result")));
+
+            let first_person_pln_pocket = test_scenario::take_from_address<verra_system::verra::Pocket>(scenario, first_person);
+            let first_person_eur_pocket = test_scenario::take_from_address<verra_system::verra::Pocket>(scenario, first_person);
+            let first_person_usd_pocket = test_scenario::take_from_address<verra_system::verra::Pocket>(scenario, first_person);
+            std::debug::print(&first_person_pln_pocket);
+            std::debug::print(&first_person_usd_pocket);
+            std::debug::print(&first_person_eur_pocket);
+
+            test_scenario::return_to_address<verra_system::verra::Pocket>(first_person, first_person_pln_pocket);
+            test_scenario::return_to_address<verra_system::verra::Pocket>(first_person, first_person_usd_pocket);
+            test_scenario::return_to_address<verra_system::verra::Pocket>(first_person, first_person_eur_pocket);
+
+        };
     }
 }
