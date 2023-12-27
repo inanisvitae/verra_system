@@ -194,11 +194,9 @@ module verra_system::tests {
             std::debug::print(&(string::utf8(b"====== Verifies the forex exchange rate publisher is initialized correctly")));
             let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(&scenario);
             std::debug::print(&publisher);
-            let (rates, fees, pockets) = verra_system::verra::get_publisher(&publisher);
+            let (rates, pockets) = verra_system::verra::get_publisher(&publisher);
             std::debug::print(rates);
             assert!(table::length(rates) == 0, 0);
-            std::debug::print(fees);
-            assert!(table::length(fees) == 0, 0);
             std::debug::print(pockets);
             assert!(table::length(pockets) == 3, 0);
             let publisher_pln_pocket = table::borrow<String, Pocket>(pockets, string::utf8(b"PLN"));
@@ -254,7 +252,7 @@ module verra_system::tests {
         {
             std::debug::print(&(string::utf8(b"====== Verifies topup exchange pocket works 2")));
             let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
-            let (rates, fees, pockets) = verra_system::verra::get_publisher(&publisher);
+            let (rates, pockets) = verra_system::verra::get_publisher(&publisher);
             let publisher_pln_pocket = table::borrow<String, Pocket>(pockets, pln_symbol());
             let (currency, type, balance, owner) = verra_system::verra::get_pocket(publisher_pln_pocket);
             std::debug::print(publisher_pln_pocket);
@@ -277,7 +275,7 @@ module verra_system::tests {
         next_tx(scenario, admin);
         {
             let publisher = test_scenario::take_shared<verra_system::verra::ExchangeRatePublisher>(scenario);
-            let (rates, fees, pockets) = verra_system::verra::get_publisher(&publisher);
+            let (rates, pockets) = verra_system::verra::get_publisher(&publisher);
             let rate_of_pln_usd: &u64 = table::borrow(rates, string::utf8(b"PLNUSD"));
             std::debug::print(rate_of_pln_usd);
             assert!(*rate_of_pln_usd == 25, 0);
